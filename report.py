@@ -51,7 +51,10 @@ PHOTO_BYTES_LIMIT = 10 * 1024 * 1024
 # long side, so we stay just under that and hand it a lossless PNG: the fewer
 # resamples between here and the phone screen, the sharper the posters.
 MAX_LONG_SIDE = 2560
-MARGIN = 28
+# A wide outer frame, not just breathing room: on a phone the notch bites into
+# the top of a tall image, and this is what it lands on instead of a poster.
+# The backdrop fills it, so it reads as part of the picture.
+MARGIN = 84
 GUTTER = 14
 BACKGROUND = (15, 17, 21)
 PLACEHOLDER = (38, 41, 48)
@@ -62,8 +65,9 @@ PLACEHOLDER = (38, 41, 48)
 BACKDROP_SPREAD = 1.5
 BACKDROP_BLUR = 7
 BACKDROP_GLOW = 0.95
-# Portrait, but not so tall that a phone's notch eats the top row — 0.47 was
-# too far, 0.91 read as square. Every sheet aims here, album or not.
+# What every sheet aims at. It is only a target: the grid has to be whole rows
+# of whole posters, so six of them land at 0.49 rather than here. The notch
+# that used to make such a tall sheet a problem is handled by MARGIN instead.
 #
 # This is deliberately chosen over pleasing Telegram's mosaic. Its grouped-media
 # layout sorts images into wide (>1.2), narrow (<0.8) and square and crops each
@@ -289,17 +293,27 @@ def choose_columns(n: int, cell_ratio: float, target: float = TARGET_ASPECT) -> 
     A cell of width 1 is 1/cell_ratio tall, so a cols x rows grid has aspect
     cols * cell_ratio / rows.
     """
-    best, best_score = 1, math.inf
-    for cols in range(1, n + 1):
-        rows = math.ceil(n / cols)
-        aspect = cols * cell_ratio / rows
-        holes = cols * rows - n
-        # Holes are penalised hard: a full grid beats a better-proportioned one
-        # with gaps, which is what keeps an explicit --chunk 9 at 3x3.
-        score = abs(math.log(aspect / target)) + holes * 0.25
-        if score <= best_score:  # ties go to the wider grid, which reads better
-            best, best_score = cols, score
-    return best
+    # Portrait is a requirement, not a preference, so landscape grids are only
+    # considered if nothing taller exists. Six posters sit exactly between 3x2
+    # and 2x3 — both a factor of 1.5 off the target — and which way that tie
+    # falls would otherwise depend on the median poster being a hair over or
+    # under 0.70, which is no way to decide the shape of the post.
+    for portrait_only in (True, False):
+        best, best_score = None, math.inf
+        for cols in range(1, n + 1):
+            rows = math.ceil(n / cols)
+            aspect = cols * cell_ratio / rows
+            if portrait_only and aspect > 1.0:
+                continue
+            holes = cols * rows - n
+            # Holes are penalised hard: a full grid beats a better-proportioned
+            # one with gaps, which is what keeps an explicit --chunk 9 at 3x3.
+            score = abs(math.log(aspect / target)) + holes * 0.25
+            if score < best_score:
+                best, best_score = cols, score
+        if best is not None:
+            return best
+    return 1
 
 
 def split_packed(items: list, size: int) -> list[list]:
@@ -766,8 +780,8 @@ def main() -> int:
                    help="first day to include (default tomorrow)")
     p.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD", help="last day to include")
     p.add_argument("--collage", type=Path, default=HERE / "collage.png")
-    p.add_argument("--chunk", type=int, default=9, metavar="N",
-                   help="films per image (default 9); 0 for a single sheet")
+    p.add_argument("--chunk", type=int, default=6, metavar="N",
+                   help="films per image (default 6); 0 for a single sheet")
     p.add_argument("--separate", action="store_true",
                    help="send sheets as separate photos, not an album (never cropped)")
     p.add_argument("--refresh", "-r", action="store_true", help="bypass the cache")
