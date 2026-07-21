@@ -59,6 +59,7 @@ MARGIN = 84
 GUTTER = 14
 BACKGROUND = (15, 17, 21)
 PLACEHOLDER = (38, 41, 48)
+NUMBER_INK = (248, 244, 238, 255)  # warm off-white; #fff reads as pasted-on UI
 # The backdrop: each poster's palette, spread into soft fields and screened
 # onto near-black. SPREAD is how far past its cell a poster's colours reach,
 # BLUR how much they melt together, GLOW the brightness — past ~1.1 it starts
@@ -336,30 +337,50 @@ def row_plan(n: int, cols: int, rows: int) -> list[int]:
 
 
 def number_font(size: int) -> ImageFont.FreeTypeFont:
-    for path in ("/System/Library/Fonts/Helvetica.ttc",
-                 "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+    """A rounded grotesque if the system has one — digits in a disc want it."""
+    for path in ("/System/Library/Fonts/SFNSRounded.ttf",
+                 "/System/Library/Fonts/SFCompactRounded.ttf",
+                 "/System/Library/Fonts/Avenir Next.ttc",
                  "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
         if Path(path).exists():
             return ImageFont.truetype(path, size)
     return ImageFont.load_default(size=size)  # ugly but never missing
 
 
-def draw_numbers(canvas: Image.Image, boxes: list[tuple[int, int]],
-                 start: int, cell_w: int) -> None:
-    """Number each poster to match the listing, pinned to its top-left corner.
+def draw_numbers(canvas: Image.Image, boxes: list[tuple[int, int]], start: int,
+                 cell_w: int, plan: list[int]) -> None:
+    """Number each poster to match the listing, out in the margin beside it.
 
-    The badge straddles the corner rather than sitting inside the poster, so
-    it eats a bit of the margin instead of the artwork — which is what the
-    wide frame is there for.
+    The disc sits in the frame rather than on the artwork — stuck over a
+    poster's corner it reads as a sticker. Rows of two put their badges on the
+    outer side of each poster, mirrored; a wider row has no outer margin to
+    use, so those fall back to a numeral inset in the top-left corner.
+
+    The ink is warm off-white rather than pure white: against poster artwork
+    #fff reads as a UI element pasted on top, and this sits with the paper.
     """
     pen = ImageDraw.Draw(canvas, "RGBA")
-    radius = max(16, cell_w // 11)
-    font = number_font(int(radius * 1.2))
-    for n, (x0, y0) in enumerate(boxes, start):
-        pen.ellipse([x0 - radius, y0 - radius, x0 + radius, y0 + radius],
-                    fill=(10, 11, 15, 232), outline=(255, 255, 255, 60), width=2)
-        pen.text((x0, y0 - radius * 0.06), str(n), font=font,
-                 fill=(255, 255, 255, 255), anchor="mm")
+    radius = max(14, int(MARGIN * 0.40))
+    font = number_font(int(radius * 1.25))
+
+    n = start
+    seen = 0
+    for in_row in plan:
+        for j in range(in_row):
+            x0, y0 = boxes[seen + j]
+            if in_row <= 2:
+                cx = x0 - MARGIN / 2 if j == 0 else x0 + cell_w + MARGIN / 2
+                cy = y0 + radius
+                pen.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                            fill=(10, 11, 15, 225), outline=(255, 255, 255, 70), width=2)
+                pen.text((cx, cy - radius * 0.05), str(n), font=font,
+                         fill=NUMBER_INK, anchor="mm")
+            else:
+                pen.text((x0 + radius, y0 + radius), str(n), font=font,
+                         fill=NUMBER_INK, anchor="mm",
+                         stroke_width=max(2, radius // 10), stroke_fill=(0, 0, 0, 170))
+            n += 1
+        seen += in_row
 
 
 def palette_patch(im: Image.Image, cols: int = 4, rows: int = 6,
@@ -543,7 +564,7 @@ def build_collage(images: list, path: Path, cols: int, rows: int,
         canvas.paste(fitted, (x0 + (cell_w - fitted.width) // 2,
                               y0 + (cell_h - fitted.height) // 2))
 
-    draw_numbers(canvas, boxes, start, cell_w)
+    draw_numbers(canvas, boxes, start, cell_w, plan)
 
     canvas.save(path, "PNG", optimize=True)
     if path.stat().st_size > PHOTO_BYTES_LIMIT:
@@ -650,7 +671,9 @@ def title_of(movie: dict, level: int) -> str:
 
 
 def film_entry(movie: dict, dates: list[dt.date], level: int, number: int) -> str:
-    return (f'{number}. <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
+    # <code> rather than <b>: it stands out inside the bold multi-venue
+    # headings too, where bold on bold would simply vanish.
+    return (f'<code>{number}</code> <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
             f' — {dates_of(dates)}')
 
 
@@ -671,8 +694,8 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
             f"· {venue_label(cinema, district, level)} — {dates_of(dates)}"
             for cinema, district, dates in entries
         )
-        blocks.append(f'<b>{number[movie["id"]]}. '
-                      f'<a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
+        blocks.append(f'<code>{number[movie["id"]]}</code> '
+                      f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
     for cinema, district, entries in cinemas:
         lines = "\n".join(film_entry(m, dates, level, number[m["id"]])
                           for m, dates in entries)
