@@ -34,7 +34,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+from PIL import (Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont,
+                   ImageOps)
 
 import ovb
 
@@ -334,6 +335,33 @@ def row_plan(n: int, cols: int, rows: int) -> list[int]:
     return [base + (1 if i < extra else 0) for i in range(used)]
 
 
+def number_font(size: int) -> ImageFont.FreeTypeFont:
+    for path in ("/System/Library/Fonts/Helvetica.ttc",
+                 "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
+        if Path(path).exists():
+            return ImageFont.truetype(path, size)
+    return ImageFont.load_default(size=size)  # ugly but never missing
+
+
+def draw_numbers(canvas: Image.Image, boxes: list[tuple[int, int]],
+                 start: int, cell_w: int) -> None:
+    """Number each poster to match the listing, pinned to its top-left corner.
+
+    The badge straddles the corner rather than sitting inside the poster, so
+    it eats a bit of the margin instead of the artwork — which is what the
+    wide frame is there for.
+    """
+    pen = ImageDraw.Draw(canvas, "RGBA")
+    radius = max(16, cell_w // 11)
+    font = number_font(int(radius * 1.2))
+    for n, (x0, y0) in enumerate(boxes, start):
+        pen.ellipse([x0 - radius, y0 - radius, x0 + radius, y0 + radius],
+                    fill=(10, 11, 15, 232), outline=(255, 255, 255, 60), width=2)
+        pen.text((x0, y0 - radius * 0.06), str(n), font=font,
+                 fill=(255, 255, 255, 255), anchor="mm")
+
+
 def palette_patch(im: Image.Image, cols: int = 4, rows: int = 6,
                   sub: int = 4) -> Image.Image:
     """A tiny map of the poster's colours — all of them, where they actually are.
@@ -458,13 +486,17 @@ def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
     cell = (int(min(by_width, by_height, native)), cell_ratio)
 
     if len(groups) == 1:
-        return [build_collage(groups[0], base, cols, rows, cell)]
-    return [build_collage(g, base.with_name(f"{base.stem}-{i}{base.suffix}"), cols, rows, cell)
-            for i, g in enumerate(groups, 1)]
+        return [build_collage(groups[0], base, cols, rows, cell, 1)]
+    sheets, first = [], 1
+    for i, group in enumerate(groups, 1):
+        sheets.append(build_collage(group, base.with_name(f"{base.stem}-{i}{base.suffix}"),
+                                    cols, rows, cell, first))
+        first += len(group)
+    return sheets
 
 
 def build_collage(images: list, path: Path, cols: int, rows: int,
-                  cell: tuple[int, float]) -> tuple[Path, int, int]:
+                  cell: tuple[int, float], start: int = 1) -> tuple[Path, int, int]:
     """Uniform grid, every poster scaled to fit (never cropped) and centred.
 
     Posters share a width of 500 but vary in height, so the cell takes the
@@ -510,6 +542,8 @@ def build_collage(images: list, path: Path, cols: int, rows: int,
         fitted = ImageOps.contain(im, (cell_w, cell_h), Image.LANCZOS)
         canvas.paste(fitted, (x0 + (cell_w - fitted.width) // 2,
                               y0 + (cell_h - fitted.height) // 2))
+
+    draw_numbers(canvas, boxes, start, cell_w)
 
     canvas.save(path, "PNG", optimize=True)
     if path.stat().st_size > PHOTO_BYTES_LIMIT:
@@ -615,8 +649,8 @@ def title_of(movie: dict, level: int) -> str:
     return esc(title)
 
 
-def film_entry(movie: dict, dates: list[dt.date], level: int) -> str:
-    return (f'▸ <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
+def film_entry(movie: dict, dates: list[dt.date], level: int, number: int) -> str:
+    return (f'{number}. <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
             f' — {dates_of(dates)}')
 
 
@@ -627,15 +661,21 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
         f"{plural(films, 'film')} · {plural(shows, 'screening')} · {fmt_span(start, end)}\n"
     )
 
+    # The same numbering the collage uses, so poster 7 is line 7.
+    order = [m for m, _ in multi] + [m for _, _, films in cinemas for m, _ in films]
+    number = {m["id"]: i for i, m in enumerate(order, 1)}
+
     blocks = []
     for movie, entries in multi:
         venues = "\n".join(
             f"· {venue_label(cinema, district, level)} — {dates_of(dates)}"
             for cinema, district, dates in entries
         )
-        blocks.append(f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
+        blocks.append(f'<b>{number[movie["id"]]}. '
+                      f'<a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
     for cinema, district, entries in cinemas:
-        lines = "\n".join(film_entry(m, dates, level) for m, dates in entries)
+        lines = "\n".join(film_entry(m, dates, level, number[m["id"]])
+                          for m, dates in entries)
         blocks.append(f"<b>{venue_label(cinema, district, level)}</b>\n{lines}")
     if dropped:
         blocks.append(f'<a href="{ovb.INDEX_URL}">+{dropped} more on ov-berlin.info</a>')
