@@ -586,6 +586,16 @@ def tg_len(text: str) -> int:
     return len(visible.encode("utf-16-le")) // 2
 
 
+def number_glyph(n: int) -> str:
+    """1 as 𝟭 — mathematical sans-serif bold digits.
+
+    Built a digit at a time, so unlike the circled forms (which run out at 20
+    or 35) any number works. <b> was no use here: the multi-venue headings are
+    bold already and it vanished into them.
+    """
+    return "".join(chr(0x1D7EC + int(d)) for d in str(n))
+
+
 def plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
@@ -660,7 +670,7 @@ def dates_of(dates: list[dt.date]) -> str:
 
 
 def venue_label(cinema: str, district: str, level: int) -> str:
-    return esc(cinema) + (f" · {esc(district)}" if district and level < 1 else "")
+    return esc(cinema) + (f", {esc(district)}" if district and level < 1 else "")
 
 
 def title_of(movie: dict, level: int) -> str:
@@ -671,9 +681,7 @@ def title_of(movie: dict, level: int) -> str:
 
 
 def film_entry(movie: dict, dates: list[dt.date], level: int, number: int) -> str:
-    # <code> rather than <b>: it stands out inside the bold multi-venue
-    # headings too, where bold on bold would simply vanish.
-    return (f'<code>{number}</code> <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
+    return (f'{number_glyph(number)} · <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
             f' — {dates_of(dates)}')
 
 
@@ -691,10 +699,10 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
     blocks = []
     for movie, entries in multi:
         venues = "\n".join(
-            f"· {venue_label(cinema, district, level)} — {dates_of(dates)}"
+            f"▸ {venue_label(cinema, district, level)} — {dates_of(dates)}"
             for cinema, district, dates in entries
         )
-        blocks.append(f'<code>{number[movie["id"]]}</code> '
+        blocks.append(f'{number_glyph(number[movie["id"]])} · '
                       f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
     for cinema, district, entries in cinemas:
         lines = "\n".join(film_entry(m, dates, level, number[m["id"]])
