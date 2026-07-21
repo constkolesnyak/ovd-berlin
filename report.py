@@ -604,28 +604,6 @@ def fmt_span(start: dt.date, end: dt.date) -> str:
     return f"{start:%-d %b}" if start == end else f"{start:%-d %b} – {end:%-d %b}"
 
 
-def fmt_dates(dates: list[dt.date], single_month: bool) -> str:
-    """22, 24, 26.07 — with three or more consecutive days collapsed to a range."""
-    runs: list[list[dt.date]] = []
-    for d in sorted(set(dates)):
-        if runs and (d - runs[-1][-1]).days == 1:
-            runs[-1].append(d)
-        else:
-            runs.append([d])
-
-    def day(d: dt.date) -> str:
-        return f"{d.day}" if single_month else f"{d.day}.{d.month:02d}"
-
-    parts = []
-    for run in runs:
-        if len(run) >= 3:
-            parts.append(f"{day(run[0])}–{day(run[-1])}")
-        else:
-            parts.extend(day(d) for d in run)
-    tail = f".{sorted(dates)[0].month:02d}" if single_month else ""
-    return ", ".join(parts) + tail
-
-
 def organise(movies: list[dict]):
     """Lay the post out so every film is named exactly once.
 
@@ -665,10 +643,6 @@ def organise(movies: list[dict]):
     return multi, cinemas, order
 
 
-def dates_of(dates: list[dt.date]) -> str:
-    return fmt_dates(dates, len({d.month for d in dates}) == 1)
-
-
 def venue_label(cinema: str, district: str, level: int) -> str:
     return esc(cinema) + (f", {esc(district)}" if district and level < 1 else "")
 
@@ -680,9 +654,8 @@ def title_of(movie: dict, level: int) -> str:
     return esc(title)
 
 
-def film_entry(movie: dict, dates: list[dt.date], level: int, number: int) -> str:
-    return (f'{number_glyph(number)} · <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>'
-            f' — {dates_of(dates)}')
+def film_entry(movie: dict, level: int, number: int) -> str:
+    return f'{number_glyph(number)} · <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>' 
 
 
 def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: int,
@@ -699,14 +672,13 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
     blocks = []
     for movie, entries in multi:
         venues = "\n".join(
-            f"▸ {venue_label(cinema, district, level)} — {dates_of(dates)}"
+            f"▸ {venue_label(cinema, district, level)}"
             for cinema, district, dates in entries
         )
         blocks.append(f'{number_glyph(number[movie["id"]])} · '
                       f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
     for cinema, district, entries in cinemas:
-        lines = "\n".join(film_entry(m, dates, level, number[m["id"]])
-                          for m, dates in entries)
+        lines = "\n".join(film_entry(m, level, number[m["id"]]) for m, _ in entries)
         blocks.append(f"<b>{venue_label(cinema, district, level)}</b>\n{lines}")
     if dropped:
         blocks.append(f'<a href="{ovb.INDEX_URL}">+{dropped} more on ov-berlin.info</a>')
