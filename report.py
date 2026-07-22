@@ -604,6 +604,12 @@ def fmt_span(start: dt.date, end: dt.date) -> str:
     return f"{start:%-d %b}" if start == end else f"{start:%-d %b} – {end:%-d %b}"
 
 
+def render_empty(start: dt.date, end: dt.date) -> str:
+    span = f"from {start:%-d %b}" if end == dt.date.max else fmt_span(start, end)
+    return ("<b>🇯🇵 Japanese in Berlin cinemas</b>\n"
+            f"No screenings listed {span}.")
+
+
 def organise(movies: list[dict]):
     """Lay the post out so every film is named exactly once.
 
@@ -832,31 +838,33 @@ def main() -> int:
     args = p.parse_args()
 
     movies, start, end = collect(args)
-    if not movies:
-        print(f"No {args.lang} screenings from {start}.", file=sys.stderr)
-        return 1
+    if movies:
+        # Render first: it settles the display order, and the collage follows it
+        # so the nth poster is the nth film in the message.
+        events = parse_events(ovb.fetch(EVENTS_URL, args.ttl, args.refresh))
+        text, level, order = render_fitting(movies, events, start, end)
 
-    # Render first: it settles the display order, and the collage follows it so
-    # the nth poster is the nth film in the message.
-    events = parse_events(ovb.fetch(EVENTS_URL, args.ttl, args.refresh))
-    text, level, order = render_fitting(movies, events, start, end)
-
-    posters = list(
-        concurrent.futures.ThreadPoolExecutor(max_workers=8).map(
-            lambda m: fetch_poster(m.get("poster", ""), args.ttl, args.refresh), order
+        posters = list(
+            concurrent.futures.ThreadPoolExecutor(max_workers=8).map(
+                lambda m: fetch_poster(m.get("poster", ""), args.ttl, args.refresh), order
+            )
         )
-    )
-    sheets = build_collages(posters, args.collage, args.chunk, album=not args.separate)
+        sheets = build_collages(posters, args.collage, args.chunk, album=not args.separate)
 
-    missing = sum(1 for x in posters if not x)
-    print(f"{plural(len(movies), 'film')} · "
-          f"{plural(sum(len(m['screenings']) for m in movies), 'screening')} · {start} – {end}" + (f", {missing} posters missing" if missing else ""),
-          file=sys.stderr)
-    for path, cols, rows in sheets:
-        w, h = Image.open(path).size
-        print(f"collage {cols}x{rows} → {path.name} {w}x{h} "
-              f"(aspect {w / h:.2f}, {path.stat().st_size // 1024} KB)", file=sys.stderr)
-    print(f"message {tg_len(text)}/{TEXT_LIMIT} chars, detail level {level}", file=sys.stderr)
+        missing = sum(1 for x in posters if not x)
+        print(f"{plural(len(movies), 'film')} · "
+              f"{plural(sum(len(m['screenings']) for m in movies), 'screening')} · {start} – {end}" + (f", {missing} posters missing" if missing else ""),
+              file=sys.stderr)
+        for path, cols, rows in sheets:
+            w, h = Image.open(path).size
+            print(f"collage {cols}x{rows} → {path.name} {w}x{h} "
+                  f"(aspect {w / h:.2f}, {path.stat().st_size // 1024} KB)", file=sys.stderr)
+        print(f"message {tg_len(text)}/{TEXT_LIMIT} chars, detail level {level}", file=sys.stderr)
+    else:
+        # No films this week — still deliver a message saying exactly that.
+        text, sheets = render_empty(start, end), []
+        print(f"no {args.lang} screenings from {start} — sending empty notice",
+              file=sys.stderr)
 
     if not args.send:
         print(text)
