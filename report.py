@@ -43,6 +43,14 @@ HERE = Path(__file__).resolve().parent
 POSTER_DIR = ovb.CACHE_DIR / "posters"
 EVENTS_URL = f"{ovb.BASE}/events"
 BLACKLIST_FILE = HERE / "cinema-blacklist.txt"
+# Which films count as "new" is decided against a saved history of past runs.
+HISTORY_FILE = HERE / "run-history.json"
+# The baseline for "new" is the most recent run at least this old. Re-running
+# inside the window (a duplicate, a manual retry, a crash-and-restart) reuses
+# the same baseline instead of becoming one, so a re-run never blanks its own
+# red badges; a skipped week simply compares against whenever the last run was.
+BASELINE_MIN_AGE = dt.timedelta(days=3)
+HISTORY_KEEP = dt.timedelta(days=120)  # drop run records older than this
 
 # Telegram counts UTF-16 code units, not characters: an emoji costs 2.
 TEXT_LIMIT = 4096
@@ -60,6 +68,10 @@ GUTTER = 14
 BACKGROUND = (15, 17, 21)
 PLACEHOLDER = (38, 41, 48)
 NUMBER_INK = (248, 244, 238, 255)  # warm off-white; #fff reads as pasted-on UI
+# Number-badge disc. Films new since the previous run get the red disc, so one
+# glance at the sheet shows what wasn't there last week.
+BADGE_FILL = (10, 11, 15, 225)       # near-black, the default
+BADGE_FILL_NEW = (198, 32, 32, 236)  # red, for films new since the last run
 # The backdrop: each poster's palette, spread into soft fields and screened
 # onto near-black. SPREAD is how far past its cell a poster's colours reach,
 # BLUR how much they melt together, GLOW the brightness — past ~1.1 it starts
@@ -349,8 +361,79 @@ def number_font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.load_default(size=size)  # ugly but never missing
 
 
+def film_key(m: dict) -> str:
+    """Stable identity for a film across runs — the site's movie id, with the
+    URL and then the title as fallbacks so a missing id never merges films."""
+    return str(m.get("id") or m.get("url") or m.get("title") or "").strip()
+
+
+def load_history(path: Path = HISTORY_FILE) -> list[dict]:
+    """Past runs as [{"ts": iso, "ids": [...]}], oldest first. Any corruption
+    or absence reads as no history — the report still goes out, just with
+    nothing marked new."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    runs = []
+    if isinstance(data, list):
+        for e in data:
+            if (isinstance(e, dict) and isinstance(e.get("ts"), str)
+                    and isinstance(e.get("ids"), list)):
+                runs.append({"ts": e["ts"], "ids": [str(x) for x in e["ids"]]})
+    runs.sort(key=lambda e: e["ts"])
+    return runs
+
+
+def new_films(current: list[dict], history: list[dict],
+              now: dt.datetime) -> set[str]:
+    """Keys of films missing from the last *distinct* previous run.
+
+    The baseline is the newest run at least BASELINE_MIN_AGE old, which keeps
+    the result stable under the two ways the schedule misbehaves: a duplicated
+    run reuses the previous week's baseline (both posts highlight the same
+    films), and a skipped week compares against the real last run. With no
+    baseline yet — the first ever run — nothing is new, which beats a wall of
+    red."""
+    cutoff = now - BASELINE_MIN_AGE
+    for e in reversed(history):
+        try:
+            ts = dt.datetime.fromisoformat(e["ts"])
+        except ValueError:
+            continue
+        if ts <= cutoff:
+            baseline = set(e["ids"])
+            return {k for m in current
+                    if (k := film_key(m)) and k not in baseline}
+    return set()
+
+
+def record_run(current: list[dict], history: list[dict], now: dt.datetime,
+               path: Path = HISTORY_FILE) -> None:
+    """Append this run and prune old ones, writing atomically so a crash or an
+    overlapping run can never leave a half-written file behind."""
+    entry = {"ts": now.isoformat(timespec="seconds"),
+             "ids": sorted({k for m in current if (k := film_key(m))})}
+    kept = []
+    for e in history + [entry]:
+        try:
+            ts = dt.datetime.fromisoformat(e["ts"])
+        except ValueError:
+            continue
+        if now - ts <= HISTORY_KEEP:
+            kept.append(e)
+    kept = kept or [entry]
+    try:
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(kept, ensure_ascii=False))
+        tmp.replace(path)
+    except OSError as exc:
+        print(f"warning: could not save run history ({exc})", file=sys.stderr)
+
+
 def draw_numbers(canvas: Image.Image, boxes: list[tuple[int, int]], start: int,
-                 cell_w: int, plan: list[int]) -> None:
+                 cell_w: int, plan: list[int],
+                 new_flags: list[bool] | None = None) -> None:
     """Number each poster to match the listing, out in the margin beside it.
 
     The disc sits in the frame rather than on the artwork — stuck over a
@@ -364,17 +447,28 @@ def draw_numbers(canvas: Image.Image, boxes: list[tuple[int, int]], start: int,
     pen = ImageDraw.Draw(canvas, "RGBA")
     radius = max(14, int(MARGIN * 0.40))
     font = number_font(int(radius * 1.25))
+    flags = new_flags or []
 
     n = start
     seen = 0
     for in_row in plan:
         for j in range(in_row):
-            x0, y0 = boxes[seen + j]
+            idx = seen + j
+            is_new = idx < len(flags) and flags[idx]
+            fill = BADGE_FILL_NEW if is_new else BADGE_FILL
+            x0, y0 = boxes[idx]
             if in_row <= 2:
                 cx = x0 - MARGIN / 2 if j == 0 else x0 + cell_w + MARGIN / 2
                 cy = y0 + radius
                 pen.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
-                            fill=(10, 11, 15, 225), outline=(255, 255, 255, 70), width=2)
+                            fill=fill, outline=(255, 255, 255, 70), width=2)
+                pen.text((cx, cy - radius * 0.05), str(n), font=font,
+                         fill=NUMBER_INK, anchor="mm")
+            elif is_new:
+                # No outer margin here, but a new film still gets its red disc.
+                cx, cy = x0 + radius, y0 + radius
+                pen.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                            fill=fill, outline=(255, 255, 255, 70), width=2)
                 pen.text((cx, cy - radius * 0.05), str(n), font=font,
                          fill=NUMBER_INK, anchor="mm")
             else:
@@ -471,6 +565,7 @@ def decode(posters: list[bytes | None]) -> list:
 
 
 def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
+                   new_flags: list[bool] | None = None,
                    album: bool = True) -> list[tuple[Path, int, int]]:
     """One collage, or an album of equally-shaped ones.
 
@@ -487,8 +582,13 @@ def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
     cell_ratio = statistics.median(ratios) if ratios else 0.7
     widths = [im.width for im in images if im]
 
+    # One flag per poster, in the same order; padded so it is never shorter.
+    flags = list(new_flags or [])
+    flags += [False] * (len(images) - len(flags))
+
     if chunk:
         groups = split_packed(images, chunk)
+        flag_groups = split_packed(flags, chunk)
         # Grid from the fullest sheet, not from the chunk: with fewer films
         # than a chunk there is only one sheet and it should not be mostly gaps.
         per = min(chunk, len(images))
@@ -496,6 +596,7 @@ def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
         rows = math.ceil(per / cols)
     else:
         groups = [images]
+        flag_groups = [flags]
         cols = choose_columns(len(images), cell_ratio, TARGET_ASPECT)
         rows = math.ceil(len(images) / cols)
     per_sheet = max(len(g) for g in groups)
@@ -509,17 +610,18 @@ def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
     cell = (int(min(by_width, by_height, native)), cell_ratio)
 
     if len(groups) == 1:
-        return [build_collage(groups[0], base, cols, rows, cell, 1)]
+        return [build_collage(groups[0], base, cols, rows, cell, flag_groups[0], 1)]
     sheets, first = [], 1
-    for i, group in enumerate(groups, 1):
+    for i, (group, fg) in enumerate(zip(groups, flag_groups), 1):
         sheets.append(build_collage(group, base.with_name(f"{base.stem}-{i}{base.suffix}"),
-                                    cols, rows, cell, first))
+                                    cols, rows, cell, fg, first))
         first += len(group)
     return sheets
 
 
 def build_collage(images: list, path: Path, cols: int, rows: int,
-                  cell: tuple[int, float], start: int = 1) -> tuple[Path, int, int]:
+                  cell: tuple[int, float], new_flags: list[bool] | None = None,
+                  start: int = 1) -> tuple[Path, int, int]:
     """Uniform grid, every poster scaled to fit (never cropped) and centred.
 
     Posters share a width of 500 but vary in height, so the cell takes the
@@ -566,7 +668,7 @@ def build_collage(images: list, path: Path, cols: int, rows: int,
         canvas.paste(fitted, (x0 + (cell_w - fitted.width) // 2,
                               y0 + (cell_h - fitted.height) // 2))
 
-    draw_numbers(canvas, boxes, start, cell_w, plan)
+    draw_numbers(canvas, boxes, start, cell_w, plan, new_flags)
 
     canvas.save(path, "PNG", optimize=True)
     if path.stat().st_size > PHOTO_BYTES_LIMIT:
@@ -841,18 +943,24 @@ def main() -> int:
     args = p.parse_args()
 
     movies, start, end = collect(args)
+    now = dt.datetime.now()
+    history = load_history()
     if movies:
         # Render first: it settles the display order, and the collage follows it
         # so the nth poster is the nth film in the message.
         events = parse_events(ovb.fetch(EVENTS_URL, args.ttl, args.refresh))
         text, level, order = render_fitting(movies, events, start, end)
 
+        fresh = new_films(movies, history, now)
+        new_flags = [film_key(m) in fresh for m in order]
+
         posters = list(
             concurrent.futures.ThreadPoolExecutor(max_workers=8).map(
                 lambda m: fetch_poster(m.get("poster", ""), args.ttl, args.refresh), order
             )
         )
-        sheets = build_collages(posters, args.collage, args.chunk, album=not args.separate)
+        sheets = build_collages(posters, args.collage, args.chunk, new_flags,
+                                album=not args.separate)
 
         missing = sum(1 for x in posters if not x)
         print(f"{plural(len(movies), 'film')} · "
@@ -876,7 +984,12 @@ def main() -> int:
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
         raise SystemExit("error: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (see .env)")
-    return send(token, chat, text, [p for p, _, _ in sheets], album=not args.separate)
+    status = send(token, chat, text, [p for p, _, _ in sheets], album=not args.separate)
+    if status == 0:
+        # Only a delivered run updates the baseline, so dry runs and failures
+        # never poison the "what was new last time" comparison.
+        record_run(movies, history, now)
+    return status
 
 
 if __name__ == "__main__":
