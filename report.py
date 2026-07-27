@@ -179,11 +179,13 @@ def parse_events(page: str) -> dict:
         count = int(m.group(1))
     empty = "No upcoming film festivals or events" in page
 
+    junk = {"view details", "details", "view event", "view", "more",
+            "read more", "learn more", "see more", "info"}
     titles = []
     for href, inner in re.findall(r'href="(/events/[^"]+)"[^>]*>(.*?)</a>', page, re.S):
         text = html.unescape(re.sub(r"<[^>]+>", " ", inner)).strip()
         text = re.sub(r"\s+", " ", text)
-        if text and (ovb.BASE + href, text) not in titles:
+        if text and text.casefold() not in junk and (ovb.BASE + href, text) not in titles:
             titles.append((ovb.BASE + href, text))
 
     return {"count": 0 if empty else count, "items": titles}
@@ -261,7 +263,7 @@ def collect(args) -> tuple[list[dict], dt.date, dt.date]:
         print(f"note: skipped {len(foreign)} film(s) that merely feature {args.lang} — "
               + "; ".join(foreign) + " (use --loose to keep them)", file=sys.stderr)
 
-    movies.sort(key=lambda m: (m["screenings"][0]["start"], m["title"]))
+    movies.sort(key=lambda m: m["title"])
     if not movies:
         return [], start, end
     last = max(dt.date.fromisoformat(s["start"][:10]) for m in movies for s in m["screenings"])
@@ -628,11 +630,11 @@ def organise(movies: list[dict]):
             v["dates"].append(dt.date.fromisoformat(s["start"][:10]))
         entries = sorted(
             ((c, v["district"], sorted(set(v["dates"]))) for c, v in venues.items()),
-            key=lambda t: (t[2][0], t[0]),
+            key=lambda t: t[0],
         )
         (multi if len(entries) > 1 else single).append((m, entries))
 
-    multi.sort(key=lambda t: (-len(t[1]), t[1][0][2][0], t[0]["title"]))
+    multi.sort(key=lambda t: t[0]["title"])
 
     groups: dict[str, dict] = {}
     for m, entries in single:
@@ -640,10 +642,10 @@ def organise(movies: list[dict]):
         g = groups.setdefault(cinema, {"district": district, "films": []})
         g["films"].append((m, dates))
     cinemas = [
-        (cinema, g["district"], sorted(g["films"], key=lambda p: (p[1][0], p[0]["title"])))
+        (cinema, g["district"], sorted(g["films"], key=lambda p: p[0]["title"]))
         for cinema, g in groups.items()
     ]
-    cinemas.sort(key=lambda t: (-sum(len(d) for _, d in t[2]), t[0]))
+    cinemas.sort(key=lambda t: t[0])
 
     order = [m for m, _ in multi] + [m for _, _, films in cinemas for m, _ in films]
     return multi, cinemas, order
@@ -691,13 +693,14 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
     body = "\n\n".join(blocks)
 
     n = events.get("count")
+    head = f'\n\n<b>🎪 <a href="{esc(EVENTS_URL)}">Festivals &amp; Events</a></b>'
     if events.get("items"):
-        shown = ", ".join(f'<a href="{esc(u)}">{esc(t)}</a>' for u, t in events["items"][:5])
-        footer = f'\n\n🎪 <a href="{esc(EVENTS_URL)}">Festivals &amp; events</a>: {shown}'
+        lines = "\n".join(f'• <a href="{esc(u)}">{esc(t)}</a>' for u, t in events["items"])
+        footer = f"{head}\n{lines}"
     elif n:
-        footer = f'\n\n🎪 <a href="{esc(EVENTS_URL)}">Festivals &amp; events</a>: {n} listed'
+        footer = f"{head}\n{n} listed"
     else:
-        footer = f'\n\n🎪 <a href="{esc(EVENTS_URL)}">Festivals &amp; events</a> — none listed'
+        footer = f"{head}\nNone listed"
     return header + "\n" + body + footer
 
 
