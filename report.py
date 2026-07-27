@@ -71,7 +71,7 @@ NUMBER_INK = (248, 244, 238, 255)  # warm off-white; #fff reads as pasted-on UI
 # Number-badge disc. Films new since the previous run get the red disc, so one
 # glance at the sheet shows what wasn't there last week.
 BADGE_FILL = (10, 11, 15, 225)       # near-black, the default
-BADGE_FILL_NEW = (198, 32, 32, 236)  # red, for films new since the last run
+BADGE_FILL_NEW = (235, 33, 33, 245)  # bright red, for films new since the last run
 # The backdrop: each poster's palette, spread into soft fields and screened
 # onto near-black. SPREAD is how far past its cell a poster's colours reach,
 # BLUR how much they melt together, GLOW the brightness — past ~1.1 it starts
