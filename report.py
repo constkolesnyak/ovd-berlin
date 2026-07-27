@@ -764,12 +764,19 @@ def title_of(movie: dict, level: int) -> str:
     return esc(title)
 
 
-def film_entry(movie: dict, level: int, number: int) -> str:
-    return f'{number_glyph(number)} · <a href="{esc(movie["url"])}">{title_of(movie, level)}</a>' 
+def new_tag(movie: dict, fresh: set[str]) -> str:
+    """Italic "(New)" in front of a film that wasn't in the previous run."""
+    return "<i>(New)</i> " if film_key(movie) in fresh else ""
+
+
+def film_entry(movie: dict, level: int, number: int, fresh: set[str]) -> str:
+    return (f'{number_glyph(number)} · {new_tag(movie, fresh)}'
+            f'<a href="{esc(movie["url"])}">{title_of(movie, level)}</a>')
 
 
 def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: int,
-           films: int, shows: int, dropped: int = 0) -> str:
+           films: int, shows: int, fresh: set[str] = frozenset(),
+           dropped: int = 0) -> str:
     header = (
         f"<b>🇯🇵 Japanese in Berlin cinemas</b>\n"
         f"{plural(films, 'film')} · {plural(shows, 'screening')} · {fmt_span(start, end)}\n"
@@ -785,10 +792,10 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
             f"▸ {venue_label(cinema, district, level)}"
             for cinema, district, dates in entries
         )
-        blocks.append(f'{number_glyph(number[movie["id"]])} · '
+        blocks.append(f'{number_glyph(number[movie["id"]])} · {new_tag(movie, fresh)}'
                       f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
     for cinema, district, entries in cinemas:
-        lines = "\n".join(film_entry(m, level, number[m["id"]]) for m, _ in entries)
+        lines = "\n".join(film_entry(m, level, number[m["id"]], fresh) for m, _ in entries)
         blocks.append(f"<b>{venue_label(cinema, district, level)}</b>\n{lines}")
     if dropped:
         blocks.append(f'<a href="{ovb.INDEX_URL}">+{dropped} more on ov-berlin.info</a>')
@@ -806,12 +813,14 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
     return header + "\n" + body + footer
 
 
-def render_fitting(movies, events, start, end) -> tuple[str, int]:
+def render_fitting(movies, events, start, end,
+                   fresh: set[str] = frozenset()) -> tuple[str, int]:
     """Render at the richest detail level that still fits in one message."""
     shows = sum(len(m["screenings"]) for m in movies)
     for level in range(2):  # 0: with districts, 1: without
         multi, cinemas, order = organise(movies)
-        text = render(multi, cinemas, events, start, end, level, len(movies), shows)
+        text = render(multi, cinemas, events, start, end, level, len(movies), shows,
+                      fresh)
         if tg_len(text) <= TEXT_LIMIT:
             if level:
                 print(f"note: dropped districts to fit {TEXT_LIMIT} chars", file=sys.stderr)
@@ -825,14 +834,14 @@ def render_fitting(movies, events, start, end) -> tuple[str, int]:
         kept.pop()
         multi, cinemas, order = organise(kept)
         text = render(multi, cinemas, events, start, end, 1, len(movies), shows,
-                      dropped=len(movies) - len(kept))
+                      fresh, dropped=len(movies) - len(kept))
         if tg_len(text) <= TEXT_LIMIT:
             print(f"warning: dropped {len(movies) - len(kept)} films to fit "
                   f"{TEXT_LIMIT} chars", file=sys.stderr)
             return text, 1, order
     multi, cinemas, order = organise(kept)
     return render(multi, cinemas, events, start, end, 1, len(movies), shows,
-                  dropped=len(movies) - len(kept)), 1, order
+                  fresh, dropped=len(movies) - len(kept)), 1, order
 
 
 # ---------------------------------------------------------------------- telegram
@@ -949,9 +958,9 @@ def main() -> int:
         # Render first: it settles the display order, and the collage follows it
         # so the nth poster is the nth film in the message.
         events = parse_events(ovb.fetch(EVENTS_URL, args.ttl, args.refresh))
-        text, level, order = render_fitting(movies, events, start, end)
-
         fresh = new_films(movies, history, now)
+        text, level, order = render_fitting(movies, events, start, end, fresh)
+
         new_flags = [film_key(m) in fresh for m in order]
 
         posters = list(
