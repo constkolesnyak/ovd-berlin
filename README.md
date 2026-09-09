@@ -1,16 +1,44 @@
-# ovb
+# ovd-berlin
 
-Two scripts over [ov-berlin.info](https://ov-berlin.info/movies/):
+**Berlin cinema, in the original language.** Berlin shows hundreds of films a week in their original
+audio with subtitles — but the only listing site that tracks it has no way to ask *"Japanese films
+with English subtitles, next week, not at the multiplex"*. This does.
 
 - **`ovb.py`** — terminal CLI: original-language screenings in Berlin, filtered by spoken language, subtitle version, date, cinema and rating.
 - **`report.py`** — the same data as a Telegram post: a poster collage plus one message. See [Telegram report](#telegram-report).
+
+Pure standard library — no pip install, no virtualenv, no dependencies. Two files, ~1,500 lines.
+
+```console
+$ ./ovb.py --lang japanese -d 7
+Japanese · English subtitles · 10 Sep – 16 Sep 2026 · 7 movies, 20 screenings
+
+Thu 10 Sep
+  20:00  Paprika (2006)
+         Babylon Alexanderplatz, Mitte  imdb 7.7  lb 4.1  rt 87%
+  21:00  Exit 8 (2025)
+         Rollberg Kinos, Neukölln  imdb 6.5  lb 3.1  rt 91%
+
+Fri 11 Sep
+  17:30  Akira (1988)
+         Babylon Alexanderplatz, Mitte  imdb 8.0  lb 4.3  rt 91%
+  20:00  Der Himmel über Berlin (1987)
+         Babylon Alexanderplatz, Mitte  imdb 7.9  lb 4.3  rt 95%
+  22:00  A Page of Madness (1926)
+         Babylon Alexanderplatz, Mitte  imdb 7.3  lb 3.8  rt 0%
+  ...
+```
+
+## How the data is obtained
 
 The site publishes RSS feeds (`/movies.rss`, `/movies/open-air.rss`, `/movies/classic.rss`, `/movies/coming-soon.rss`), but they carry **no language or subtitle information** — only title, link and blurb. So this script reads two other things instead:
 
 - the `/movies/` index page, where each movie card carries `data-languages`, `data-versions` and per-day `data-day-id` rows — enough to decide *which* movies are worth a closer look, in one request;
 - the JSON-LD `ScreeningEvent` blocks on each surviving movie's page, which give exact showtime, cinema, district, subtitle version and ticket link.
 
-Pure stdlib, no dependencies. Responses are cached in `.cache/` for 6 hours.
+Responses are cached in `.cache/` for 6 hours.
+
+The same index cards also carry IMDb, Letterboxd and Rotten Tomatoes scores as data attributes, so `--min-imdb` and `--sort rating` cost no extra requests.
 
 ## Usage
 
@@ -68,8 +96,10 @@ Credentials come from the environment or a `.env` next to the script (gitignored
 
 ```sh
 TELEGRAM_BOT_TOKEN=123456:AA...
-TELEGRAM_CHAT_ID=401389749
+TELEGRAM_CHAT_ID=123456789
 ```
+
+<img src="docs/telegram-collage.jpg" alt="One sheet of the poster collage sent to Telegram" width="330" align="right">
 
 ### Why it looks the way it does
 
@@ -87,3 +117,7 @@ TELEGRAM_CHAT_ID=401389749
 ### Caveat: events
 
 The `/events` section is folded into the report, but it has been empty site-wide since this was written (0 events in all seven cities). The parser recognises the empty state and reads the counter; **the populated markup is unverified** — when real events appear, check that section against the live HTML before trusting it.
+
+## License
+
+[MIT](LICENSE). Screening data belongs to ov-berlin.info; posters to their respective rights holders.
