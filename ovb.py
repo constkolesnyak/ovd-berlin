@@ -78,11 +78,25 @@ def fetch(url: str, ttl: int, refresh: bool = False) -> str:
 
 DAY_RE = re.compile(
     r'data-day-id="([^"]*)"[^>]*>.*?data-cinema-count="([^"]*)"[^>]*>.*?data-versions="([^"]*)"',
-    re.S,
+    re.DOTALL,
 )
 GENRE_RE = re.compile(r'/icons/tags\.svg"[^>]*>([^<]*)<')
 SLUG_RE = re.compile(r'href="(/movies/[^"]+)"')
-LD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
+LD_RE = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.DOTALL)
+
+
+def _attr(head: str, name: str, default: str = "") -> str:
+    """Value of one attribute in a tag's opening text."""
+    m = re.search(rf'{name}="([^"]*)"', head)
+    return html.unescape(m.group(1)) if m else default
+
+
+def _attr_json(head: str, name: str, default):
+    raw = _attr(head, name)
+    try:
+        return json.loads(raw) if raw else default
+    except json.JSONDecodeError:
+        return default
 
 
 def parse_index(page: str) -> list[dict]:
@@ -91,17 +105,6 @@ def parse_index(page: str) -> list[dict]:
     for chunk in page.split('<table class="table w-100 movie-table"')[1:]:
         head = chunk[: chunk.find(">")]
         body = chunk[: chunk.find("</table>")]
-
-        def attr(name: str, default: str = "") -> str:
-            m = re.search(rf'{name}="([^"]*)"', head)
-            return html.unescape(m.group(1)) if m else default
-
-        def attr_json(name: str, default):
-            raw = attr(name)
-            try:
-                return json.loads(raw) if raw else default
-            except json.JSONDecodeError:
-                return default
 
         # per-day cinema count and available versions, plus an "all-days" summary
         days = {
@@ -113,13 +116,13 @@ def parse_index(page: str) -> list[dict]:
 
         movies.append(
             {
-                "id": attr("data-movie-id"),
-                "title": attr("data-movie-title"),
-                "year": attr("data-movie-year"),
-                "imdb": attr("data-imdb-score"),
-                "lb": attr("data-letterboxd-score"),
-                "rt": attr("data-rt-tomatometer"),
-                "languages": attr_json("data-languages", []),
+                "id": _attr(head, "data-movie-id"),
+                "title": _attr(head, "data-movie-title"),
+                "year": _attr(head, "data-movie-year"),
+                "imdb": _attr(head, "data-imdb-score"),
+                "lb": _attr(head, "data-letterboxd-score"),
+                "rt": _attr(head, "data-rt-tomatometer"),
+                "languages": _attr_json(head, "data-languages", []),
                 "genres": [g.strip() for g in genres.group(1).split(",")] if genres else [],
                 "days": {d: v for d, v in days.items() if d != "all-days"},
                 "versions": days.get("all-days", {}).get("versions", ""),
@@ -431,9 +434,13 @@ def main() -> int:
 
     labels = {"omeu": "English subtitles", "omu": "German subtitles",
               "ov": "no subtitles", "any": "any version"}
-    scope = f"{'/'.join(l.title() for l in langs)} · " if langs else ""
+    scope = "/".join(lang.title() for lang in langs)
+    scope = f"{scope} · " if scope else ""
     n_movies = len({r["id"] for r in rows})
-    plural = lambda n, word: f"{n} {word}{'' if n == 1 else 's'}"
+
+    def plural(n: int, word: str) -> str:
+        return f"{n} {word}{'' if n == 1 else 's'}"
+
     first = parse_date(min(r["start"][:10] for r in rows))
     last = parse_date(max(r["start"][:10] for r in rows))
     span = f"{first:%d %b}" if first == last else f"{first:%d %b} – {last:%d %b %Y}"

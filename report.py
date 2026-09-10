@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Japanese-language screenings in Berlin as a Telegram post: poster collage + one message.
+"""Original-language screenings in Berlin as a Telegram post: collage + one message.
 
 Reuses the scraping, caching and parsing already in ovb.py, then adds the three
 things a chat post needs: posters composited into one image, a listing squeezed
@@ -34,8 +34,15 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from PIL import (Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont,
-                   ImageOps)
+from PIL import (
+    Image,
+    ImageChops,
+    ImageDraw,
+    ImageEnhance,
+    ImageFilter,
+    ImageFont,
+    ImageOps,
+)
 
 import ovb
 
@@ -121,6 +128,14 @@ def load_blacklist(path: Path = BLACKLIST_FILE) -> set[str]:
 # ---------------------------------------------------------------------- scraping
 
 
+def _names(node: dict, field: str) -> list[str]:
+    """Names from a JSON-LD list that mixes {"name": ...} objects and bare strings."""
+    out = []
+    for item in node.get(field) or []:
+        out.append(item.get("name") if isinstance(item, dict) else item)
+    return [n for n in out if n]
+
+
 def movie_details(page: str) -> dict:
     """Everything the JSON-LD Movie node knows, including its ScreeningEvents.
 
@@ -135,12 +150,6 @@ def movie_details(page: str) -> dict:
         for node in data if isinstance(data, list) else [data]:
             if not isinstance(node, dict) or node.get("@type") != "Movie":
                 continue
-
-            def names(field):
-                out = []
-                for item in node.get(field) or []:
-                    out.append(item.get("name") if isinstance(item, dict) else item)
-                return [n for n in out if n]
 
             minutes = re.search(r"PT(\d+)M", node.get("duration") or "")
             links = {}
@@ -169,9 +178,9 @@ def movie_details(page: str) -> dict:
                 "description": node.get("description") or "",
                 "runtime": int(minutes.group(1)) if minutes else None,
                 "genres": node.get("genre") or [],
-                "directors": names("director"),
-                "cast": names("actor"),
-                "countries": names("countryOfOrigin"),
+                "directors": _names(node, "director"),
+                "cast": _names(node, "actor"),
+                "countries": _names(node, "countryOfOrigin"),
                 "content_rating": node.get("contentRating") or "",
                 "links": links,
                 "trailer": (node.get("trailer") or {}).get("embedUrl", ""),
@@ -194,7 +203,8 @@ def parse_events(page: str) -> dict:
     junk = {"view details", "details", "view event", "view", "more",
             "read more", "learn more", "see more", "info"}
     titles = []
-    for href, inner in re.findall(r'href="(/events/[^"]+)"[^>]*>(.*?)</a>', page, re.S):
+    pattern = r'href="(/events/[^"]+)"[^>]*>(.*?)</a>'
+    for href, inner in re.findall(pattern, page, re.DOTALL):
         text = html.unescape(re.sub(r"<[^>]+>", " ", inner)).strip()
         text = re.sub(r"\s+", " ", text)
         if text and text.casefold() not in junk and (ovb.BASE + href, text) not in titles:
@@ -212,6 +222,8 @@ HOMELANDS = {
     "Korean": {"South Korea", "Korea"},
     "Chinese": {"China", "Taiwan", "Hong Kong"},
 }
+# Flag for the message heading; a language not listed here gets a clapperboard.
+FLAGS = {"Japanese": "🇯🇵", "Korean": "🇰🇷", "Chinese": "🇨🇳"}
 
 
 def is_native(movie: dict, lang: str) -> bool:
@@ -565,8 +577,7 @@ def decode(posters: list[bytes | None]) -> list:
 
 
 def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
-                   new_flags: list[bool] | None = None,
-                   album: bool = True) -> list[tuple[Path, int, int]]:
+                   new_flags: list[bool] | None = None) -> list[tuple[Path, int, int]]:
     """One collage, or an album of equally-shaped ones.
 
     Splitting is what buys resolution: a single sheet of everything hits the
@@ -599,7 +610,6 @@ def build_collages(posters: list[bytes | None], base: Path, chunk: int | None,
         flag_groups = [flags]
         cols = choose_columns(len(images), cell_ratio, TARGET_ASPECT)
         rows = math.ceil(len(images) / cols)
-    per_sheet = max(len(g) for g in groups)
 
     # Size the cell so neither side of the canvas exceeds Telegram's ceiling,
     # and never upscale past the source resolution — with only a handful of
@@ -684,6 +694,10 @@ def esc(text: str) -> str:
     return html.escape(str(text), quote=False)
 
 
+def heading(lang: str) -> str:
+    return f"<b>{FLAGS.get(lang, '🎬')} {esc(lang)} in Berlin cinemas</b>"
+
+
 def tg_len(text: str) -> int:
     """Visible length as Telegram measures it: tags stripped, UTF-16 units."""
     visible = html.unescape(re.sub(r"<[^>]+>", "", text))
@@ -708,10 +722,9 @@ def fmt_span(start: dt.date, end: dt.date) -> str:
     return f"{start:%-d %b}" if start == end else f"{start:%-d %b} – {end:%-d %b}"
 
 
-def render_empty(start: dt.date, end: dt.date) -> str:
+def render_empty(start: dt.date, end: dt.date, lang: str = "Japanese") -> str:
     span = f"from {start:%-d %b}" if end == dt.date.max else fmt_span(start, end)
-    return ("<b>🇯🇵 Japanese in Berlin cinemas</b>\n"
-            f"No screenings listed {span}.")
+    return f"{heading(lang)}\nNo screenings listed {span}."
 
 
 def organise(movies: list[dict]):
@@ -776,9 +789,9 @@ def film_entry(movie: dict, level: int, number: int, fresh: set[str]) -> str:
 
 def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: int,
            films: int, shows: int, fresh: set[str] = frozenset(),
-           dropped: int = 0) -> str:
+           dropped: int = 0, lang: str = "Japanese") -> str:
     header = (
-        f"<b>🇯🇵 Japanese in Berlin cinemas</b>\n"
+        f"{heading(lang)}\n"
         f"{plural(films, 'film')} · {plural(shows, 'screening')} · {fmt_span(start, end)}\n"
     )
 
@@ -793,7 +806,8 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
             for cinema, district, dates in entries
         )
         blocks.append(f'{number_glyph(number[movie["id"]])} · {new_tag(movie, fresh)}'
-                      f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>\n{venues}')
+                      f'<b><a href="{esc(movie["url"])}">{title_of(movie, level)}</a></b>'
+                      f"\n{venues}")
     for cinema, district, entries in cinemas:
         lines = "\n".join(film_entry(m, level, number[m["id"]], fresh) for m, _ in entries)
         blocks.append(f"<b>{venue_label(cinema, district, level)}</b>\n{lines}")
@@ -813,14 +827,14 @@ def render(multi, cinemas, events: dict, start: dt.date, end: dt.date, level: in
     return header + "\n" + body + footer
 
 
-def render_fitting(movies, events, start, end,
-                   fresh: set[str] = frozenset()) -> tuple[str, int]:
+def render_fitting(movies, events, start, end, fresh: set[str] = frozenset(),
+                   lang: str = "Japanese") -> tuple[str, int, list[dict]]:
     """Render at the richest detail level that still fits in one message."""
     shows = sum(len(m["screenings"]) for m in movies)
     for level in range(2):  # 0: with districts, 1: without
         multi, cinemas, order = organise(movies)
         text = render(multi, cinemas, events, start, end, level, len(movies), shows,
-                      fresh)
+                      fresh, lang=lang)
         if tg_len(text) <= TEXT_LIMIT:
             if level:
                 print(f"note: dropped districts to fit {TEXT_LIMIT} chars", file=sys.stderr)
@@ -834,14 +848,14 @@ def render_fitting(movies, events, start, end,
         kept.pop()
         multi, cinemas, order = organise(kept)
         text = render(multi, cinemas, events, start, end, 1, len(movies), shows,
-                      fresh, dropped=len(movies) - len(kept))
+                      fresh, dropped=len(movies) - len(kept), lang=lang)
         if tg_len(text) <= TEXT_LIMIT:
             print(f"warning: dropped {len(movies) - len(kept)} films to fit "
                   f"{TEXT_LIMIT} chars", file=sys.stderr)
             return text, 1, order
     multi, cinemas, order = organise(kept)
     return render(multi, cinemas, events, start, end, 1, len(movies), shows,
-                  fresh, dropped=len(movies) - len(kept)), 1, order
+                  fresh, dropped=len(movies) - len(kept), lang=lang), 1, order
 
 
 # ---------------------------------------------------------------------- telegram
@@ -929,7 +943,7 @@ def send(token: str, chat: str, text: str, collages: list[Path], album: bool = T
 def main() -> int:
     load_env()
     p = argparse.ArgumentParser(
-        description="Japanese screenings in Berlin as a Telegram post.",
+        description="Original-language screenings in Berlin as a Telegram post.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__.split("\n\n", 1)[1],
     )
@@ -959,7 +973,7 @@ def main() -> int:
         # so the nth poster is the nth film in the message.
         events = parse_events(ovb.fetch(EVENTS_URL, args.ttl, args.refresh))
         fresh = new_films(movies, history, now)
-        text, level, order = render_fitting(movies, events, start, end, fresh)
+        text, level, order = render_fitting(movies, events, start, end, fresh, args.lang)
 
         new_flags = [film_key(m) in fresh for m in order]
 
@@ -968,12 +982,12 @@ def main() -> int:
                 lambda m: fetch_poster(m.get("poster", ""), args.ttl, args.refresh), order
             )
         )
-        sheets = build_collages(posters, args.collage, args.chunk, new_flags,
-                                album=not args.separate)
+        sheets = build_collages(posters, args.collage, args.chunk, new_flags)
 
         missing = sum(1 for x in posters if not x)
-        print(f"{plural(len(movies), 'film')} · "
-              f"{plural(sum(len(m['screenings']) for m in movies), 'screening')} · {start} – {end}" + (f", {missing} posters missing" if missing else ""),
+        shows = sum(len(m["screenings"]) for m in movies)
+        print(f"{plural(len(movies), 'film')} · {plural(shows, 'screening')} · "
+              f"{start} – {end}" + (f", {missing} posters missing" if missing else ""),
               file=sys.stderr)
         for path, cols, rows in sheets:
             w, h = Image.open(path).size
@@ -982,7 +996,7 @@ def main() -> int:
         print(f"message {tg_len(text)}/{TEXT_LIMIT} chars, detail level {level}", file=sys.stderr)
     else:
         # No films this week — still deliver a message saying exactly that.
-        text, sheets = render_empty(start, end), []
+        text, sheets = render_empty(start, end, args.lang), []
         print(f"no {args.lang} screenings from {start} — sending empty notice",
               file=sys.stderr)
 

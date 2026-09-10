@@ -1,0 +1,7 @@
+line-length = 100
+
+[lint]
+ignore = [
+    "DTZ",     # showtimes and run timestamps are local Berlin time on purpose
+    "BLE001",  # decode(): whatever a broken poster raises must not sink the post
+]
