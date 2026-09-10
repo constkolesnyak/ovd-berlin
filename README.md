@@ -43,7 +43,7 @@ The same index cards also carry IMDb, Letterboxd and Rotten Tomatoes scores as d
 ## Usage
 
 ```sh
-./ovb.py --lang japanese              # Japanese audio + English subtitles, everything listed
+./ovb.py --lang japanese              # Japanese audio + English subtitles
 ./ovb.py -l japanese -d 5             # just the next 5 days
 ./ovb.py -l korean -s any             # any subtitle version, not only English
 ./ovb.py -l japanese --group movie --sort rating --links
@@ -65,7 +65,7 @@ Subtitle versions follow the site's own vocabulary:
 Discover what to filter on:
 
 ```sh
-./ovb.py --list langs      # spoken languages currently in Berlin cinemas, by movie count
+./ovb.py --list langs      # spoken languages in Berlin cinemas now, by movie count
 ./ovb.py --list genres
 ./ovb.py --list cinemas    # all 65 venues the site tracks
 ```
