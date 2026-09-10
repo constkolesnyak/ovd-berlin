@@ -1,6 +1,6 @@
 # Cinemas to leave out of the Telegram report.
 # One venue per line, matched against the full name, case-insensitive.
 # Blank lines and #-comments are ignored. Run with --no-blacklist to bypass.
-# `./ovb.py --list cinemas` prints every name the site uses.
+# `uv run ovb --list cinemas` prints every name the site uses.
 
 Open Air Kino Mitte

@@ -7,34 +7,33 @@
 </p>
 
 <img src="docs/telegram-collage.jpg" align="right" width="240"
-     alt="One sheet of the poster collage report.py posts to Telegram">
+     alt="One sheet of the poster collage ovd-report posts to Telegram">
 
 Berlin shows hundreds of films a week in their original audio, and
-[ov-berlin.info](https://ov-berlin.info) lists them all. What it cannot answer is
-*"Japanese films with English subtitles, next week, not at the multiplex"*.
-These two scripts can, in the terminal or as a weekly Telegram post.
+[ov-berlin.info](https://ov-berlin.info) lists them all. What it cannot answer
+is *"Japanese, English subtitles, next week"*. These two commands can.
 
 ## What it does
 
 - **Filter like a person.** Spoken language, subtitle version, date window,
   cinema, genre, title, IMDb or Letterboxd score, in any combination.
-- **Terminal or JSON.** `ovb.py` prints screenings by day or by film, or dumps
+- **Terminal or JSON.** `ovb` prints screenings by day or by film, or dumps
   JSON for `jq`; it is standard library only.
-- **Telegram digest.** `report.py` posts an album of poster sheets plus one
+- **Telegram digest.** `ovd-report` posts an album of poster sheets plus one
   message that names every film exactly once, numbered to match.
 - **New-film badges.** Films absent from the previous post get a red disc on the
   sheet and a *(New)* tag in the message.
 - **Cheap on the site.** Pages are cached for six hours, and only films that pass
   the filters get their page fetched.
-- **Venue blacklist.** Cinemas listed in `cinema-blacklist.txt` never appear in
-  the post, and the run says which entries matched nothing.
+- **Venue blacklist.** Cinemas listed in `config/cinema-blacklist.txt` never
+  appear in the post, and the run says which entries matched nothing.
 
 <br clear="all">
 
 ## Example
 
 ```console
-$ ./ovb.py --lang japanese --days 7
+$ uv run ovb --lang japanese --days 7
 Japanese · English subtitles · 10 Sep – 16 Sep 2026 · 7 movies, 20 screenings
 
 Thu 10 Sep
@@ -66,24 +65,24 @@ Babylon Alexanderplatz, Mitte
 
 ```sh
 git clone https://github.com/constkolesnyak/ovd-berlin.git && cd ovd-berlin
-./ovb.py --lang japanese                 # Japanese audio, English subtitles
+uv sync                                  # virtualenv + Pillow
+uv run ovb --lang japanese               # Japanese audio, English subtitles
 
-pip install -r requirements.txt          # Pillow, for the collage
-./report.py                              # dry run: message + collage.png
+uv run ovd-report                        # dry run: message + collage.png
 cp .env.example .env                     # bot token + chat id, chmod 600
-./report.py --send
+uv run ovd-report --send
 ```
 
-Python 3.10+ on macOS or Linux. `ovb.py` needs nothing else; `report.py` needs
-Pillow 10.1 or newer.
+Python 3.10+ on macOS or Linux, with [uv](https://docs.astral.sh/uv/). `ovb` is
+standard library only; the report needs Pillow, which `uv sync` installs.
 
 ## How it works
 
 ```mermaid
 flowchart TD
     A["ov-berlin.info<br/>index page"] -->|"cheap filters"| C["movie pages<br/>JSON-LD"]
-    C --> D["ovb.py<br/>terminal listing"]
-    C --> E["report.py<br/>collage + message"]
+    C --> D["ovb<br/>terminal listing"]
+    C --> E["ovd-report<br/>collage + message"]
     E --> F["Telegram<br/>Bot API"]
 ```
 
@@ -112,20 +111,22 @@ blacklist and a native-language rule, renders the message, and lays out the post
 
 ## Configuration
 
-Only `report.py --send` needs credentials, read from the environment or from a
-`.env` file next to the script (gitignored; real environment variables win).
+Only `ovd-report --send` needs credentials, read from the environment or from a
+`.env` file in the project root (gitignored; real environment variables win).
 
 | Variable             | Meaning                                      |
 | -------------------- | -------------------------------------------- |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
 | `TELEGRAM_CHAT_ID`   | Chat or user id to post to, e.g. `123456789` |
 
-`cinema-blacklist.txt` holds one venue per line, matched case-insensitively
-against the full name (`./ovb.py --list cinemas` prints them; `#` comments).
+`config/cinema-blacklist.txt` holds one venue per line, matched case-insensitively
+against the full name (`uv run ovb --list cinemas` prints them; `#` comments).
+Every runtime path (`.env`, `config/`, `.cache/`, `run-history.json`, the collage)
+resolves from the project root, the parent of the package, so run from a checkout.
 
 ## CLI reference
 
-**`ovb.py`** (exit code `1` when nothing matches)
+**`ovb`** (exit code `1` when nothing matches)
 
 | Option                          | Meaning                                         |
 | ------------------------------- | ----------------------------------------------- |
@@ -142,7 +143,7 @@ against the full name (`./ovb.py --list cinemas` prints them; `#` comments).
 | `--list langs\|cinemas\|genres` | print the available values and exit             |
 | `-r`, `--refresh`, `--ttl SEC`, `--no-color` | bypass the cache; lifetime (21600); plain text |
 
-**`report.py`**
+**`ovd-report`**
 
 | Option                          | Meaning                                         |
 | ------------------------------- | ----------------------------------------------- |
@@ -150,7 +151,7 @@ against the full name (`./ovb.py --list cinemas` prints them; `#` comments).
 | `--lang LANG`                   | language, site spelling (default `Japanese`)    |
 | `--from`, `--to YYYY-MM-DD`     | window; defaults tomorrow and open-ended        |
 | `--loose`                       | keep films that merely list the language        |
-| `--no-blacklist`                | ignore `cinema-blacklist.txt`                   |
+| `--no-blacklist`                | ignore `config/cinema-blacklist.txt`            |
 | `--collage PATH`                | output file (default `collage.png`)             |
 | `--chunk N`                     | films per sheet (default 6); `0` for one sheet  |
 | `--separate`                    | individual photos instead of one album          |
@@ -159,20 +160,20 @@ against the full name (`./ovb.py --list cinemas` prints them; `#` comments).
 ## Project layout
 
 ```text
-ovb.py                 scraper + terminal CLI (standard library only)
-report.py              Telegram digest: collage, message, delivery; imports ovb
-cinema-blacklist.txt   venues left out of the report
-.env.example           TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID template
-requirements.txt       Pillow, for report.py
-ruff.toml              lint settings
+ovd_berlin/ovb.py             scraper + terminal CLI (standard library only)
+ovd_berlin/report.py          Telegram digest: collage, message, delivery
+config/cinema-blacklist.txt   venues left out of the report
+docs/                         the README image
+pyproject.toml                metadata, the two commands, Pillow, ruff settings
+.env.example                  TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID template
 .cache/  run-history.json  collage*.png   written at run time, gitignored
 ```
 
 ## Development
 
-`python3 -m py_compile ovb.py report.py` and `uvx ruff check .` (clean). There is
-no test suite: the live site is the only meaningful test, and a layout change
-stops both scripts with `parsed 0 movies`.
+`uv run python -m compileall -q ovd_berlin` and `uvx ruff check .` (clean);
+`python -m ovd_berlin.ovb` also works. There is no test suite: the live site is
+the only meaningful test, and a layout change stops both with `parsed 0 movies`.
 
 ## License
 

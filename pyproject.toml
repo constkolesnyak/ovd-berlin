@@ -1,0 +1,25 @@
+[project]
+name = "ovd-berlin"
+version = "1.0.0"
+description = "Original-language cinema screenings in Berlin: terminal listing and Telegram digest"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = ["Pillow>=10.1"]
+
+[project.scripts]
+ovb = "ovd_berlin.ovb:main"
+ovd-report = "ovd_berlin.report:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+ignore = [
+    "DTZ",     # showtimes and run timestamps are local Berlin time on purpose
+    "BLE001",  # decode(): whatever a broken poster raises must not sink the post
+]

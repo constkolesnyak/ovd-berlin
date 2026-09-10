@@ -1,16 +1,16 @@
-#!/usr/bin/env python3
 """Original-language screenings in Berlin as a Telegram post: collage + one message.
 
 Reuses the scraping, caching and parsing already in ovb.py, then adds the three
 things a chat post needs: posters composited into one image, a listing squeezed
 under Telegram's 4096-character ceiling, and delivery through the Bot API.
 
-    ./report.py                 # dry run: print the message, write collage.png
-    ./report.py --send          # post it to TELEGRAM_CHAT_ID
-    ./report.py --from 2026-08-04 --lang Korean
+    ovd-report                  # dry run: print the message, write collage.png
+    ovd-report --send           # post it to TELEGRAM_CHAT_ID
+    ovd-report --from 2026-08-04 --lang Korean
 
-Credentials come from the environment or a .env file next to this script:
-TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Never hardcode them here.
+Credentials come from the environment or a .env file in the project root:
+TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID. Never hardcode them here. The
+blacklist (config/), the cache, the run history and the collage live there too.
 """
 
 from __future__ import annotations
@@ -44,14 +44,14 @@ from PIL import (
     ImageOps,
 )
 
-import ovb
+from ovd_berlin import ovb
 
-HERE = Path(__file__).resolve().parent
+ROOT = ovb.ROOT  # project root: the parent of the package
 POSTER_DIR = ovb.CACHE_DIR / "posters"
 EVENTS_URL = f"{ovb.BASE}/events"
-BLACKLIST_FILE = HERE / "cinema-blacklist.txt"
+BLACKLIST_FILE = ROOT / "config" / "cinema-blacklist.txt"
 # Which films count as "new" is decided against a saved history of past runs.
-HISTORY_FILE = HERE / "run-history.json"
+HISTORY_FILE = ROOT / "run-history.json"
 # The baseline for "new" is the most recent run at least this old. Re-running
 # inside the window (a duplicate, a manual retry, a crash-and-restart) reuses
 # the same baseline instead of becoming one, so a re-run never blanks its own
@@ -101,7 +101,7 @@ TARGET_ASPECT = 0.70
 # ------------------------------------------------------------------------ setup
 
 
-def load_env(path: Path = HERE / ".env") -> None:
+def load_env(path: Path = ROOT / ".env") -> None:
     """Populate os.environ from a .env file without overriding real env vars."""
     if not path.exists():
         return
@@ -940,7 +940,7 @@ def send(token: str, chat: str, text: str, collages: list[Path], album: bool = T
 # -------------------------------------------------------------------------- main
 
 
-def main() -> int:
+def run() -> int:
     load_env()
     p = argparse.ArgumentParser(
         description="Original-language screenings in Berlin as a Telegram post.",
@@ -956,7 +956,7 @@ def main() -> int:
     p.add_argument("--from", dest="date_from", metavar="YYYY-MM-DD",
                    help="first day to include (default tomorrow)")
     p.add_argument("--to", dest="date_to", metavar="YYYY-MM-DD", help="last day to include")
-    p.add_argument("--collage", type=Path, default=HERE / "collage.png")
+    p.add_argument("--collage", type=Path, default=ROOT / "collage.png")
     p.add_argument("--chunk", type=int, default=6, metavar="N",
                    help="films per image (default 6); 0 for a single sheet")
     p.add_argument("--separate", action="store_true",
@@ -1015,8 +1015,13 @@ def main() -> int:
     return status
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entry point."""
     try:
-        sys.exit(main())
+        sys.exit(run())
     except KeyboardInterrupt:
         sys.exit(130)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Find original-language screenings in Berlin cinemas from ov-berlin.info.
 
 The site's RSS feeds carry no language or subtitle information, so this reads
@@ -7,11 +6,14 @@ the movies that survive filtering, the JSON-LD ScreeningEvent blocks on each
 movie page for exact showtimes, cinemas and ticket links.
 
 Examples:
-    ./ovb.py --lang japanese                 # Japanese audio, English subs (default)
-    ./ovb.py --lang korean --subs any        # any subtitle version
-    ./ovb.py --days 3 --min-imdb 7.5
-    ./ovb.py --lang japanese --group movie --links
-    ./ovb.py --list langs                    # what languages are on right now
+    ovb --lang japanese                 # Japanese audio, English subs (default)
+    ovb --lang korean --subs any        # any subtitle version
+    ovb --days 3 --min-imdb 7.5
+    ovb --lang japanese --group movie --links
+    ovb --list langs                    # what languages are on right now
+
+Runs as the `ovb` console script or `python -m ovd_berlin.ovb`. The page cache
+lives in `.cache/` under the project root, the parent of this package.
 """
 
 from __future__ import annotations
@@ -33,8 +35,10 @@ from pathlib import Path
 BASE = "https://ov-berlin.info"
 INDEX_URL = f"{BASE}/movies/"
 CINEMAS_URL = f"{BASE}/cinemas/"
-CACHE_DIR = Path(__file__).resolve().parent / ".cache"
-UA = "ovb.py/1.0 (+personal screening lookup)"
+# Runtime files sit in the project root, the parent of the ovd_berlin package.
+ROOT = Path(__file__).resolve().parent.parent
+CACHE_DIR = ROOT / ".cache"
+UA = "ovd-berlin/1.0 (+personal screening lookup)"
 DEFAULT_TTL = 6 * 3600
 
 # Subtitle versions used by the site: OV (no subs), OmU (German subs),
@@ -302,7 +306,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Find original-language screenings in Berlin (ov-berlin.info).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__.split("Examples:")[1],
+        epilog=__doc__.split("Examples:")[1].split("\nRuns as")[0],
     )
     p.add_argument("--lang", "-l", action="append", default=[], metavar="NAME",
                    help="spoken language, repeatable or comma-separated (e.g. japanese)")
@@ -334,7 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main() -> int:
+def run() -> int:
     args = build_parser().parse_args()
 
     want_subs = SUBS_ALIASES.get(args.subs.lower())
@@ -452,12 +456,17 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Console-script entry point: exit codes for Ctrl-C and a closed pipe."""
     try:
-        sys.exit(main())
+        sys.exit(run())
     except KeyboardInterrupt:
         sys.exit(130)
     except BrokenPipeError:
-        # `./ovb.py | head` closes the pipe early; also silence the final flush
+        # `ovb | head` closes the pipe early; also silence the final flush
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         sys.exit(141)
+
+
+if __name__ == "__main__":
+    main()

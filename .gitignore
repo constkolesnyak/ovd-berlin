@@ -4,3 +4,5 @@ __pycache__/
 collage*.png
 collage*.jpg
 run-history.json
+.venv/
+uv.lock

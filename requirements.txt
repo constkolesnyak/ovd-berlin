@@ -1,2 +1,0 @@
-# Only report.py needs this; ovb.py is standard library only.
-Pillow>=10.1
